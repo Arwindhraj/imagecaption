@@ -37,26 +37,31 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         model.train()
         total_loss = 0
         for batch_idx, (images, captions) in enumerate(train_loader):
-            images, captions = images.to(device), captions.to(device)
+            try:
+                images, captions = images.to(device), captions.to(device)
 
-            combined_features = combine_features(images,processor,model_vit,model_re,)
-            attended_features = prepare_for_cross_attention(combined_features)
-            
-            optimizer.zero_grad()
-            print("Image --> Model")
-            outputs = model(attended_features, captions[:, :-1]) 
-            print("Calculating Loss")
-            loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # prevent exploding gradients, stabilizes training
-            optimizer.step()
-            print("Loss calculated")
-            
-            total_loss += loss.item()
-            
-            if batch_idx % 100 == 0:
-                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
-                logging.info(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+                combined_features = combine_features(images,processor,model_vit,model_re,)
+                attended_features = prepare_for_cross_attention(combined_features)
+                
+                optimizer.zero_grad()
+                print("Image --> Model")
+                outputs = model(attended_features, captions[:, :-1]) 
+                print("Calculating Loss ▲")
+                loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # prevent exploding gradients, stabilizes training
+                optimizer.step()
+                print("Loss calculated ✔")
+
+                total_loss += loss.item()
+                print(f"Batch index : {batch_idx} and loss: {loss.item():.4f}")
+
+                if batch_idx % 100 == 0:
+                    print(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+                    logging.info(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+                    
+            except Exception as e:
+                logging.error(f"Error in training batch {batch_idx}: {str(e)}")
 
         avg_train_loss = total_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -75,18 +80,22 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         logging.info(f"Checkpoint saved to {checkpoint_path}")
 
         print("Model Evaluating")
-        model.eval()
-        total_val_loss = 0
-        with torch.no_grad():
-            for images, captions in val_loader:
-                images, captions = images.to(device), captions.to(device)
-                outputs = model(images, captions[:, :-1])
-                loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
-                total_val_loss += loss.item()
+        try:
+            model.eval()
+            total_val_loss = 0
+            with torch.no_grad():
+                for images, captions in val_loader:
+                    images, captions = images.to(device), captions.to(device)
+                    outputs = model(images, captions[:, :-1])
+                    loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
+                    total_val_loss += loss.item()
 
-        avg_val_loss = total_val_loss / len(val_loader)
-        val_losses.append(avg_val_loss)
-        scheduler.step(avg_val_loss)
+            avg_val_loss = total_val_loss / len(val_loader)
+            val_losses.append(avg_val_loss)
+            scheduler.step(avg_val_loss)
+
+        except Exception as e:
+                logging.error(f"Error in training batch {batch_idx}: {str(e)}")
 
         print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
         logging.info(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
@@ -98,7 +107,6 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
 if __name__ == "__main__":
 
     setup_logging()
-    print("Logging setup completed")
     logging.info("Training Started")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -146,7 +154,7 @@ if __name__ == "__main__":
     
     count_parameters(model)
     
-    criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.stoi["<PAD>"], label_smoothing=0.1)# improve model calibration and generalization by preventing the model from becoming overconfident.
+    criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.stoi["<PAD>"], label_smoothing=0.1) # improve model calibration and generalization by preventing the model from becoming overconfident.
 
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
