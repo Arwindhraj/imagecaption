@@ -21,6 +21,8 @@ import torch.utils.data as data
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
 
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 def setup_logging():
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
@@ -78,7 +80,7 @@ class Flickr30kDataset(data.Dataset):
         
     def load_captions(self, captions_file):
         data = {'image': [], 'caption': []}
-        with open(captions_file, 'r') as file:
+        with open(captions_file, 'r', encoding='utf-8') as file:
             lines = file.readlines()
         
         for line in lines:
@@ -130,7 +132,7 @@ def Vit(image,processor,model_vit):
     # processor = ViTImageProcessor.from_pretrained('vit-base-patch16-224')
     # model = ViTModel.from_pretrained('vit-base-patch16-224').to(device)
 
-    inputs = processor(images=image, return_tensors="pt").to(device)
+    inputs = processor(images=image, return_tensors="pt").to("cuda")
     # outputs = model(**inputs)
 
     with torch.no_grad():
@@ -141,7 +143,7 @@ def Vit(image,processor,model_vit):
     return features
 
 def res(image,model_re):
-    # model_re = fasterrcnn_resnet50_fpn(pretrained=True).to(device)
+    # model_re = fasterrcnn_resnet50_fpn(pretrained=True).to("cuda")
     # model_re.eval()  
 
     image_tensor = image  
@@ -167,7 +169,7 @@ def combine_features(image,processor,model_vit,model_re,):
         'labels': labels,
         'scores': scores
     }
-    
+    combined_features = combined_features
     return combined_features
 
 class LocalFeatureEncoder(nn.Module):
@@ -181,6 +183,7 @@ class LocalFeatureEncoder(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         
     def forward(self, rcnn_features):
+        rcnn_features = rcnn_features.to("cuda")
         x = self.rcnn_projection(rcnn_features)
         x = x + self.pos_encoder
         
@@ -206,17 +209,20 @@ def apply_cross_attention(vit_features, encoded_local_features):
     if encoded_local_features.dim() == 2:
         encoded_local_features = encoded_local_features.unsqueeze(0)
 
-    vit_features = vit_features.transpose(0, 1)
-    encoded_local_features = encoded_local_features.transpose(0, 1)
+    vit_features = vit_features.transpose(0, 1).to("cuda")
+    encoded_local_features = encoded_local_features.transpose(0, 1).to("cuda")
     
     attended_features = cross_attention(vit_features, encoded_local_features, encoded_local_features)
     
     attended_features = attended_features.transpose(0, 1)
+    attended_features = attended_features.to("cuda")
     
     return attended_features
 
 def prepare_for_cross_attention(combined_features):
-    vit_features = torch.tensor(combined_features['vit']).unsqueeze(0) 
+    # vit_features = torch.tensor(combined_features['vit']).unsqueeze(0) 
+    vit_features = combined_features['vit'].clone().detach().unsqueeze(0).to("cuda")
+
     
     boxes = combined_features['boxes']
     labels = combined_features['labels']
@@ -229,17 +235,20 @@ def prepare_for_cross_attention(combined_features):
     filtered_labels = labels[high_confidence_indices]
     
     rcnn_features = torch.cat([filtered_boxes, filtered_labels.unsqueeze(1).float()], dim=1)
-    
+    rcnn_features = rcnn_features.to("cuda")
     max_objects = 10
     if rcnn_features.size(0) < max_objects:
         padding = torch.zeros(max_objects - rcnn_features.size(0), rcnn_features.size(1))
+        padding = padding.to("cuda")
         rcnn_features = torch.cat([rcnn_features, padding], dim=0)
     else:
         rcnn_features = rcnn_features[:max_objects]
     
     rcnn_features = rcnn_features.unsqueeze(0)
+    rcnn_features = rcnn_features.to("cuda")
     
-    encoded_local_features = local_feature_encoder(rcnn_features)
+    encoded_local_features = local_feature_encoder(rcnn_features.to("cuda"))
+    encoded_local_features = encoded_local_features.to("cuda")
     
     attended_features = apply_cross_attention(vit_features, encoded_local_features)
     
@@ -256,21 +265,67 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.attended_features_projection = nn.Linear(768, d_model) # To handle potential shape mismatch
 
-def forward(self, images, captions):
+    # def forward(self, images, captions):
+    #     images = images.to("cuda")
+    #     print(f"Images shape: {images.shape}")
+    #     print(f"Captions shape: {captions.shape}")
         
-        attended_features = images.to(device)
-        attended_features = self.attended_features_projection(attended_features)
+    #     attended_features = self.attended_features_projection(images)
+    #     print(f"Attended features shape after projection: {attended_features.shape}")
+        
+    #     embedded_captions = self.embedding(captions)
+    #     print(f"Embedded captions shape: {embedded_captions.shape}")
+        
+    #     embedded_captions = self.norm(embedded_captions)
+    #     embedded_captions = self.dropout(embedded_captions)
+        
+    #     # Adjust dimensions for the decoder
+    #     attended_features = attended_features.transpose(0, 1)
+    #     embedded_captions = embedded_captions.transpose(0, 1)
+        
+    #     print(f"Attended features shape before decoder: {attended_features.shape}")
+    #     print(f"Embedded captions shape before decoder: {embedded_captions.shape}")
+        
+    #     decoded_features = self.decoder(embedded_captions, attended_features)
+    #     print(f"Decoded features shape: {decoded_features.shape}")
+        
+    #     outputs = self.fc_out(decoded_features.transpose(0, 1))
+    #     print(f"Outputs shape: {outputs.shape}")
+        
+    #     return outputs
+    def forward(self, images, captions):
+        print(f"Images shape: {images.shape}")
+        print(f"Captions shape: {captions.shape}")
+        
+        # Project and reshape attended features
+        attended_features = self.attended_features_projection(images)
+        attended_features = attended_features.squeeze(0).unsqueeze(1).repeat(1, captions.size(1), 1)
+        print(f"Attended features shape after projection and reshape: {attended_features.shape}")
+        
         embedded_captions = self.embedding(captions)
+        print(f"Embedded captions shape: {embedded_captions.shape}")
+        
         embedded_captions = self.norm(embedded_captions)
-        embedded_captions = self.dropout(self.norm(embedded_captions))
-        decoded_features = self.decoder(embedded_captions.transpose(0, 1), attended_features.transpose(0, 1))
+        embedded_captions = self.dropout(embedded_captions)
+        
+        # Adjust dimensions for the decoder
+        attended_features = attended_features.transpose(0, 1)
+        embedded_captions = embedded_captions.transpose(0, 1)
+        
+        print(f"Attended features shape before decoder: {attended_features.shape}")
+        print(f"Embedded captions shape before decoder: {embedded_captions.shape}")
+        
+        decoded_features = self.decoder(embedded_captions, attended_features)
+        print(f"Decoded features shape: {decoded_features.shape}")
         
         outputs = self.fc_out(decoded_features.transpose(0, 1))
+        print(f"Outputs shape: {outputs.shape}")
         
         return outputs
+        
 
 def train_model(processor, model_vit, model_re, model, train_loader, val_loader, criterion, optimizer, num_epochs, device, scheduler):
-    model.to(device)
+    model.to("cuda")
     checkpoint_dir = 'checkpoint'
     os.makedirs(checkpoint_dir, exist_ok=True)
     train_losses = []
@@ -279,20 +334,20 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         model.train()
         total_loss = 0
         for batch_idx, (images, captions) in enumerate(train_loader):
-            images, captions = images.to(device), captions.to(device)
+            images, captions = images.to("cuda"), captions.to("cuda")
 
-            combined_features = combine_features(images,processor,model_vit,model_re,)
+            combined_features = combine_features(images,processor,model_vit,model_re)
             attended_features = prepare_for_cross_attention(combined_features)
             
             optimizer.zero_grad()
-            print("Image --> Model")
+            print("Image --> Model for ",batch_idx)
             outputs = model(attended_features, captions[:, :-1]) 
-            print("Calculating Loss")
+            print("Calculating Loss ▲ for ",batch_idx)
             loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # prevent exploding gradients, stabilizes training
             optimizer.step()
-            print("Loss calculated")
+            print("Loss calculated ✔ for ",batch_idx)
             
             total_loss += loss.item()
             
@@ -320,7 +375,7 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         total_val_loss = 0
         with torch.no_grad():
             for images, captions in val_loader:
-                images, captions = images.to(device), captions.to(device)
+                images, captions = images.to("cuda"), captions.to("cuda")
                 outputs = model(images, captions[:, :-1])
                 loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
                 total_val_loss += loss.item()
@@ -381,13 +436,13 @@ def count_parameters(model):
     print(f"Total Trainable Params: {total_params}")
     return total_params
 
-local_feature_encoder = LocalFeatureEncoder(input_dim=5, d_model=768)
-cross_attention = CrossAttention(d_model=768, nhead=8)
+local_feature_encoder = LocalFeatureEncoder(input_dim=5, d_model=768).to("cuda")
+cross_attention = CrossAttention(d_model=768, nhead=8).to("cuda")
 
 if __name__ == "__main__":
 
     setup_logging()
-    print("Logging setup completed")
+    logging.info("Training Started")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -396,8 +451,8 @@ if __name__ == "__main__":
         transforms.ToTensor(),
     ])
 
-    root_folder="D:/Project_Files/image-caption/Flicker8k Dataset/images"
-    annotation_file="D:/Project_Files/image-caption/Flicker8k Dataset/captions.txt"
+    root_folder="flicker30k/Images"
+    annotation_file="flicker30k/captions.txt"
     batch_size = 32
     shuffle=True
     num_workers=4
