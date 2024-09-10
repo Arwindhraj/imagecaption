@@ -53,7 +53,7 @@ class Flickr30kDataset(data.Dataset):
         
     def load_captions(self, captions_file):
         data = {'image': [], 'caption': []}
-        with open(captions_file, 'r') as file:
+        with open(captions_file, 'r', encoding='utf-8') as file:
             lines = file.readlines()
         
         for line in lines:

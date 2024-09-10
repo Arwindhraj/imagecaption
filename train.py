@@ -15,6 +15,8 @@ import torch.nn as nn
 import torch.utils.data as data
 import torchvision.transforms as transforms
 
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 def setup_logging():
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
@@ -28,7 +30,7 @@ def setup_logging():
     )
 
 def train_model(processor, model_vit, model_re, model, train_loader, val_loader, criterion, optimizer, num_epochs, device, scheduler):
-    model.to(device)
+    model.to("cuda")
     checkpoint_dir = 'checkpoint'
     os.makedirs(checkpoint_dir, exist_ok=True)
     train_losses = []
@@ -37,31 +39,24 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         model.train()
         total_loss = 0
         for batch_idx, (images, captions) in enumerate(train_loader):
-            try:
-                images, captions = images.to(device), captions.to(device)
+            images, captions = images.to("cuda"), captions.to("cuda")
 
-                combined_features = combine_features(images,processor,model_vit,model_re,)
-                attended_features = prepare_for_cross_attention(combined_features)
-                
-                optimizer.zero_grad()
-                print("Image --> Model")
-                outputs = model(attended_features, captions[:, :-1]) 
-                print("Calculating Loss ▲")
-                loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # prevent exploding gradients, stabilizes training
-                optimizer.step()
-                print("Loss calculated ✔")
+            combined_features = combine_features(images,processor,model_vit,model_re)
+            attended_features = prepare_for_cross_attention(combined_features)
+            
+            optimizer.zero_grad()
+            outputs = model(attended_features, captions[:, :-1]) 
+            loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # prevent exploding gradients, stabilizes training
+            optimizer.step()
 
-                total_loss += loss.item()
-                print(f"Batch index : {batch_idx} and loss: {loss.item():.4f}")
+            total_loss += loss.item()
 
-                if batch_idx % 100 == 0:
-                    print(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
-                    logging.info(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+            if batch_idx % 100 == 0:
+                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+                logging.info(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
                     
-            except Exception as e:
-                logging.error(f"Error in training batch {batch_idx}: {str(e)}")
 
         avg_train_loss = total_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -80,22 +75,19 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         logging.info(f"Checkpoint saved to {checkpoint_path}")
 
         print("Model Evaluating")
-        try:
-            model.eval()
-            total_val_loss = 0
-            with torch.no_grad():
-                for images, captions in val_loader:
-                    images, captions = images.to(device), captions.to(device)
-                    outputs = model(images, captions[:, :-1])
-                    loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
-                    total_val_loss += loss.item()
+        logging.info("Model Evaluating")
+        model.eval()
+        total_val_loss = 0
+        with torch.no_grad():
+            for images, captions in val_loader:
+                images, captions = images.to(device), captions.to(device)
+                outputs = model(images, captions[:, :-1])
+                loss = criterion(outputs.reshape(-1, outputs.shape[-1]), captions[:, 1:].reshape(-1))
+                total_val_loss += loss.item()
 
-            avg_val_loss = total_val_loss / len(val_loader)
-            val_losses.append(avg_val_loss)
-            scheduler.step(avg_val_loss)
-
-        except Exception as e:
-                logging.error(f"Error in training batch {batch_idx}: {str(e)}")
+        avg_val_loss = total_val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
+        scheduler.step(avg_val_loss)
 
         print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
         logging.info(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
@@ -116,12 +108,12 @@ if __name__ == "__main__":
         transforms.ToTensor(),
     ])
 
-    root_folder="images"
-    annotation_file="captions.txt"
+    root_folder="flicker30k/Images"
+    annotation_file="flicker30k/captions.txt"
     
-    batch_size = 32
+    batch_size = 64
     shuffle=True
-    num_workers=4
+    num_workers=8
     pin_memory=True
 
     dataset = Flickr30kDataset(root_folder, annotation_file, transform=transform)
@@ -159,8 +151,8 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
     
-    processor = ViTImageProcessor.from_pretrained('D:/Project_Files/Image-Caption-Transformer/vit-base-patch16-224')
-    model_vit = ViTModel.from_pretrained('D:/Project_Files/Image-Caption-Transformer/vit-base-patch16-224').to(device)
+    processor = ViTImageProcessor.from_pretrained('vit-base-patch16-224')
+    model_vit = ViTModel.from_pretrained('vit-base-patch16-224').to(device)
     
     model_re = fasterrcnn_resnet50_fpn(pretrained=True).to(device)
     model_re.eval()

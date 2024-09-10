@@ -25,17 +25,19 @@ def apply_cross_attention(vit_features, encoded_local_features):
     if encoded_local_features.dim() == 2:
         encoded_local_features = encoded_local_features.unsqueeze(0)
 
-    vit_features = vit_features.transpose(0, 1)
-    encoded_local_features = encoded_local_features.transpose(0, 1)
+    vit_features = vit_features.transpose(0, 1).to("cuda")
+    encoded_local_features = encoded_local_features.transpose(0, 1).to("cuda")
     
     attended_features = cross_attention(vit_features, encoded_local_features, encoded_local_features)
     
     attended_features = attended_features.transpose(0, 1)
+    attended_features = attended_features.to("cuda")
     
     return attended_features
 
 def prepare_for_cross_attention(combined_features):
-    vit_features = torch.tensor(combined_features['vit']).unsqueeze(0) 
+    vit_features = combined_features['vit'].clone().detach().unsqueeze(0).to("cuda")
+
     
     boxes = combined_features['boxes']
     labels = combined_features['labels']
@@ -48,17 +50,20 @@ def prepare_for_cross_attention(combined_features):
     filtered_labels = labels[high_confidence_indices]
     
     rcnn_features = torch.cat([filtered_boxes, filtered_labels.unsqueeze(1).float()], dim=1)
-    
+    rcnn_features = rcnn_features.to("cuda")
     max_objects = 10
     if rcnn_features.size(0) < max_objects:
         padding = torch.zeros(max_objects - rcnn_features.size(0), rcnn_features.size(1))
+        padding = padding.to("cuda")
         rcnn_features = torch.cat([rcnn_features, padding], dim=0)
     else:
         rcnn_features = rcnn_features[:max_objects]
     
     rcnn_features = rcnn_features.unsqueeze(0)
+    rcnn_features = rcnn_features.to("cuda")
     
-    encoded_local_features = local_feature_encoder(rcnn_features)
+    encoded_local_features = local_feature_encoder(rcnn_features.to("cuda"))
+    encoded_local_features = encoded_local_features.to("cuda")
     
     attended_features = apply_cross_attention(vit_features, encoded_local_features)
     
@@ -76,5 +81,5 @@ def combine_features(image,processor,model_vit,model_re,):
         'labels': labels,
         'scores': scores
     }
-    
+    combined_features = combined_features
     return combined_features

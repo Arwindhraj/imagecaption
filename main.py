@@ -129,11 +129,8 @@ class MyCollate:
         return imgs, captions
     
 def Vit(image,processor,model_vit):
-    # processor = ViTImageProcessor.from_pretrained('vit-base-patch16-224')
-    # model = ViTModel.from_pretrained('vit-base-patch16-224').to(device)
 
     inputs = processor(images=image, return_tensors="pt").to("cuda")
-    # outputs = model(**inputs)
 
     with torch.no_grad():
         outputs = model_vit(**inputs)
@@ -143,8 +140,6 @@ def Vit(image,processor,model_vit):
     return features
 
 def res(image,model_re):
-    # model_re = fasterrcnn_resnet50_fpn(pretrained=True).to("cuda")
-    # model_re.eval()  
 
     image_tensor = image  
 
@@ -220,7 +215,6 @@ def apply_cross_attention(vit_features, encoded_local_features):
     return attended_features
 
 def prepare_for_cross_attention(combined_features):
-    # vit_features = torch.tensor(combined_features['vit']).unsqueeze(0) 
     vit_features = combined_features['vit'].clone().detach().unsqueeze(0).to("cuda")
 
     

@@ -3,7 +3,8 @@ from torch.nn import TransformerDecoder, TransformerDecoderLayer
 import torch
 import torch.nn as nn
 
-def Vit(image, processor, model_vit):
+def Vit(image,processor,model_vit):
+
     inputs = processor(images=image, return_tensors="pt").to("cuda")
 
     with torch.no_grad():
@@ -13,7 +14,8 @@ def Vit(image, processor, model_vit):
 
     return features
 
-def res(image,model_re): 
+def res(image,model_re):
+
     image_tensor = image  
 
     with torch.no_grad():
@@ -36,6 +38,7 @@ class LocalFeatureEncoder(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         
     def forward(self, rcnn_features):
+        rcnn_features = rcnn_features.to("cuda")
         x = self.rcnn_projection(rcnn_features)
         x = x + self.pos_encoder
         
@@ -66,14 +69,19 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.attended_features_projection = nn.Linear(768, d_model) # To handle potential shape mismatch
 
-def forward(self, images, captions):
+    def forward(self, images, captions):
         
-        attended_features = images.to("cuda")
-        attended_features = self.attended_features_projection(attended_features)
+        attended_features = self.attended_features_projection(images)
+        attended_features = attended_features.squeeze(0).unsqueeze(1).repeat(1, captions.size(1), 1) # Project and reshape attended features
+        
         embedded_captions = self.embedding(captions)
         embedded_captions = self.norm(embedded_captions)
-        embedded_captions = self.dropout(self.norm(embedded_captions))
-        decoded_features = self.decoder(embedded_captions.transpose(0, 1), attended_features.transpose(0, 1))
+        embedded_captions = self.dropout(embedded_captions)
+    
+        attended_features = attended_features.transpose(0, 1)
+        embedded_captions = embedded_captions.transpose(0, 1)
+        
+        decoded_features = self.decoder(embedded_captions, attended_features)
         
         outputs = self.fc_out(decoded_features.transpose(0, 1))
         
