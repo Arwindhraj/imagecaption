@@ -259,34 +259,6 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.attended_features_projection = nn.Linear(768, d_model) # To handle potential shape mismatch
 
-    # def forward(self, images, captions):
-    #     images = images.to("cuda")
-    #     print(f"Images shape: {images.shape}")
-    #     print(f"Captions shape: {captions.shape}")
-        
-    #     attended_features = self.attended_features_projection(images)
-    #     print(f"Attended features shape after projection: {attended_features.shape}")
-        
-    #     embedded_captions = self.embedding(captions)
-    #     print(f"Embedded captions shape: {embedded_captions.shape}")
-        
-    #     embedded_captions = self.norm(embedded_captions)
-    #     embedded_captions = self.dropout(embedded_captions)
-        
-    #     # Adjust dimensions for the decoder
-    #     attended_features = attended_features.transpose(0, 1)
-    #     embedded_captions = embedded_captions.transpose(0, 1)
-        
-    #     print(f"Attended features shape before decoder: {attended_features.shape}")
-    #     print(f"Embedded captions shape before decoder: {embedded_captions.shape}")
-        
-    #     decoded_features = self.decoder(embedded_captions, attended_features)
-    #     print(f"Decoded features shape: {decoded_features.shape}")
-        
-    #     outputs = self.fc_out(decoded_features.transpose(0, 1))
-    #     print(f"Outputs shape: {outputs.shape}")
-        
-    #     return outputs
     def forward(self, images, captions):
         print(f"Images shape: {images.shape}")
         print(f"Captions shape: {captions.shape}")
@@ -317,6 +289,37 @@ class Decoder(nn.Module):
         
         return outputs
         
+def save_model(model, optimizer, scheduler, epoch, avg_train_loss, vocab, path):
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'loss': avg_train_loss,
+        'vocab': vocab,
+    }, path)
+    print(f"Model saved to {path}")
+    logging.info(f"Model saved to {path}")
+
+def load_model(path, vocab_size, device):
+    checkpoint = torch.load(path)
+    model = Decoder(vocab_size)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+
+    optimizer = optim.Adam(model.parameters())
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    start_epoch = checkpoint['epoch']
+    avg_train_loss = checkpoint['loss']
+
+    vocab = checkpoint['vocab']
+
+    return model, optimizer, scheduler, start_epoch, avg_train_loss, vocab
 
 def train_model(processor, model_vit, model_re, model, train_loader, val_loader, criterion, optimizer, num_epochs, device, scheduler):
     model.to("cuda")
@@ -355,15 +358,7 @@ def train_model(processor, model_vit, model_re, model, train_loader, val_loader,
         logging.info(f"Epoch [{epoch+1}/{num_epochs}], Average Loss: {avg_train_loss:.4f}")
 
         checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch+1}.pth')
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
-            'loss': avg_train_loss,
-        }, checkpoint_path)
-        print(f"Checkpoint saved to {checkpoint_path}")
-        logging.info(f"Checkpoint saved to {checkpoint_path}")
+        save_model(model, optimizer, scheduler, epoch, avg_train_loss, dataset.vocab, checkpoint_path)
 
         model.eval()
         total_val_loss = 0
@@ -498,3 +493,41 @@ if __name__ == "__main__":
 
     num_epochs = 30
     train_model(processor,model_vit,model_re, model, train_loader, val_loader, criterion, optimizer, num_epochs, device, scheduler)
+
+
+
+# def generate_caption(model, processor, model_vit, model_re, image_path, vocab, device):
+#     # Preprocess the image
+#     image = Image.open(image_path).convert("RGB")
+#     image_tensor = transform(image).unsqueeze(0).to(device)
+    
+#     # Extract features
+#     combined_features = combine_features(image_tensor, processor, model_vit, model_re)
+#     attended_features = prepare_for_cross_attention(combined_features)
+    
+#     # Initialize the sequence with the start token
+#     sequence = [vocab.stoi["<SOS>"]]
+    
+#     # Generate the caption one word at a time
+#     while True:
+#         sequence_tensor = torch.LongTensor(sequence).unsqueeze(0).to(device)
+#         output = model(attended_features, sequence_tensor)
+#         predicted_word_index = output.argmax(dim=-1).item()
+        
+#         # Append the predicted word to the sequence
+#         sequence.append(predicted_word_index)
+        
+#         # If the end token is reached, stop
+#         if predicted_word_index == vocab.stoi["<EOS>"]:
+#             break
+    
+#     # Convert the sequence of word indices back into words
+#     caption = ' '.join([vocab.itos[word_index] for word_index in sequence[1:-1]])
+#     return caption
+
+# # Assuming model, processor, model_vit, model_re, and vocab are loaded and device is set
+# image_path = "path_to_your_image.jpg"
+
+# # Generate and print the caption
+# caption = generate_caption(model, processor, model_vit, model_re, image_path, vocab, device)
+# print("Generated Caption:", caption)
